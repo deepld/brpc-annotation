@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-cmake_minimum_required(VERSION 2.8.10)
+#cmake_minimum_required(VERSION 2.8.10)
 project(brpc C CXX)
 
 option(WITH_GLOG "With glog" OFF)
@@ -484,3 +484,4 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/output/include/
 # Install pkgconfig
 configure_file(cmake/brpc.pc.in ${PROJECT_BINARY_DIR}/brpc.pc @ONLY)
 install(FILES ${PROJECT_BINARY_DIR}/brpc.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+add_subdirectory(example/echo_c++)
