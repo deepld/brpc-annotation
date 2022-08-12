@@ -451,7 +451,7 @@ set(SOURCES
     )
 
 add_subdirectory(src)
-add_subdirectory(example/redis_c++)
+#add_subdirectory(example/redis_c++)
 add_subdirectory(example/echo_c++)
 if(BUILD_UNIT_TESTS)
     enable_testing()

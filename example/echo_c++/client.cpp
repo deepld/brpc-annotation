@@ -84,6 +84,7 @@ int main(int argc, char* argv[]) {
             LOG(WARNING) << cntl.ErrorText();
         }
         usleep(FLAGS_interval_ms * 1000L);
+        getchar();
     }
 
     LOG(INFO) << "EchoClient is going to quit";
