@@ -27,7 +27,7 @@
 #include <brpc/redis.h>
 
 DEFINE_string(connection_type, "", "Connection type. Available values: single, pooled, short");
-DEFINE_string(server, "127.0.0.1:6379", "IP Address of server");
+DEFINE_string(server, "127.0.0.1:9000", "IP Address of server");
 DEFINE_int32(timeout_ms, 1000, "RPC timeout in milliseconds");
 DEFINE_int32(max_retry, 3, "Max retries(not including the first RPC)"); 
 
@@ -57,6 +57,7 @@ static bool access_redis(brpc::Channel& channel, const char* command) {
 // For freeing the memory returned by readline().
 struct Freer {
     void operator()(char* mem) {
+        return;
         free(mem);
     }
 };
@@ -87,7 +88,7 @@ int main(int argc, char* argv[]) {
     brpc::ChannelOptions options;
     options.protocol = brpc::PROTOCOL_REDIS;
     options.connection_type = FLAGS_connection_type;
-    options.timeout_ms = FLAGS_timeout_ms/*milliseconds*/;
+    options.timeout_ms = FLAGS_timeout_ms * 10000/*milliseconds*/;
     options.max_retry = FLAGS_max_retry;
     if (channel.Init(FLAGS_server.c_str(), &options) != 0) {
         LOG(ERROR) << "Fail to initialize channel";
@@ -97,7 +98,7 @@ int main(int argc, char* argv[]) {
     if (argc <= 1) {  // interactive mode
         // We need this dummy signal hander to interrupt getc (and returning
         // EINTR), SIG_IGN did not work.
-        signal(SIGINT, dummy_handler);
+//        signal(SIGINT, dummy_handler);
         
         // Hook getc of readline.
         rl_getc_function = cli_getc;
@@ -112,21 +113,24 @@ int main(int argc, char* argv[]) {
         for (;;) {
             char prompt[64];
             snprintf(prompt, sizeof(prompt), "redis %s> ", FLAGS_server.c_str());
-            std::unique_ptr<char, Freer> command(readline(prompt));
-            if (command == NULL || *command == '\0') {
-                if (g_canceled) {
-                    // No input after the prompt and user pressed Ctrl-C,
-                    // quit the CLI.
-                    return 0;
-                }
-                // User entered an empty command by just pressing Enter.
-                continue;
-            }
-            if (g_canceled) {
-                // User entered sth. and pressed Ctrl-C, start a new prompt.
-                g_canceled = false;
-                continue;
-            }
+//            std::unique_ptr<char, Freer> command(readline(prompt));
+//            if (command == NULL || *command == '\0') {
+//                if (g_canceled) {
+//                    // No input after the prompt and user pressed Ctrl-C,
+//                    // quit the CLI.
+//                    return 0;
+//                }
+//                // User entered an empty command by just pressing Enter.
+//                continue;
+//            }
+//            if (g_canceled) {
+//                // User entered sth. and pressed Ctrl-C, start a new prompt.
+//                g_canceled = false;
+//                continue;
+//            }
+
+
+            std::unique_ptr<char, Freer> command("set a b");
             // Add user's command to history so that it's browse-able by
             // UP-key and search-able by Ctrl-R.
             add_history(command.get());
@@ -141,6 +145,8 @@ int main(int argc, char* argv[]) {
                 return 0;
             }
             access_redis(channel, command.get());
+
+            sleep(100);
         }
     } else {
         std::string command;
