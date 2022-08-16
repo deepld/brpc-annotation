@@ -121,6 +121,7 @@ bool TaskGroup::wait_task(bthread_t* tid) {
         if (_last_pl_state.stopped()) {
             return false;
         }
+        // NOTE(deepld): 有新任务来了，被 wakeup，获取一个要执行的 bthread
         _pl->wait(_last_pl_state);
         if (steal_task(tid)) {
             return true;
@@ -248,11 +249,17 @@ int TaskGroup::init(size_t runqueue_capacity) {
     return 0;
 }
 
+// NOTE(deepld): 所有 bthread 执行的入口，里边会调用用户先线程
 void TaskGroup::task_runner(intptr_t skip_remained) {
     // NOTE: tls_task_group is volatile since tasks are moved around
     //       different groups.
     TaskGroup* g = tls_task_group;
 
+    // NOTE(deepld): 恢复之前的任务，比如：
+    //    1. start_foreground 中更紧急的任务来了之后，会把_last_context_remained 设置为 重新添加 到 TaskGroup 组，
+    //       TaskControl::signal_task(，因为是当前 pthread id 下的调用，因此必然还是在当前 TaskGroup 租，即：PARKING_LOT
+    //       Q：为啥不能在紧急任务加入时直接调用？A：可能是要确保紧急任务在 之前任务之前运行
+    //    2. usleep 之后调度一个新的任务，这时需要将之前的 bthread 加入到 timer 中，超时后重新加入到 queue 中
     if (!skip_remained) {
         while (g->_last_context_remained) {
             RemainedFn fn = g->_last_context_remained;
@@ -303,6 +310,8 @@ void TaskGroup::task_runner(intptr_t skip_remained) {
         // TODO: Save thread_return
         (void)thread_return;
 
+        // NOTE(deepld): bthread 执行结束，开始进行清理 和 唤醒
+
         // Logging must be done before returning the keytable, since the logging lib
         // use bthread local storage internally, or will cause memory leak.
         // FIXME: the time from quiting fn to here is not counted into cputime
@@ -322,6 +331,7 @@ void TaskGroup::task_runner(intptr_t skip_remained) {
             m->local_storage.keytable = NULL; // optional
         }
 
+        // NOTE(deepld): 更新 mutex version，表明 bthread 要释放了，唤醒等待者
         // Increase the version and wake up all joiners, if resulting version
         // is 0, change it to 1 to make bthread_t never be 0. Any access
         // or join to the bthread after changing version will be rejected.
@@ -335,6 +345,9 @@ void TaskGroup::task_runner(intptr_t skip_remained) {
         butex_wake_except(m->version_butex, 0);
 
         g->_control->_nbthreads << -1;
+
+        // NOTE(deepld): 设置归还 bthread 结构体；不能在当前堆栈中归还，当前堆栈还在执行中，不能立即释放自己
+        //    开始之前已经执行过 skip_remained，因此 _last_context_remained 必然是空，所以这里可以设置
         g->set_remained(TaskGroup::_release_last_context, m);
         ending_sched(&g);
 
@@ -390,6 +403,10 @@ int TaskGroup::start_foreground(TaskGroup** pg,
         LOG(INFO) << "Started bthread " << m->tid;
     }
 
+    // NOTE(deepld): 执行到这里，说明是在 bthread 线程中的，而不是在外部线程中调用 start_bthread
+    //    1. 这里之前强制抢占开启新的 bthread 执行
+    //    2. 等抢占执行前，先将当前被抢占的任务，重新丢回到 queue 中去
+    // 当前 bthread 肯定不是 main bthread
     TaskGroup* g = *pg;
     g->_control->_nbthreads << 1;
     if (g->is_current_pthread_task()) {
@@ -407,6 +424,9 @@ int TaskGroup::start_foreground(TaskGroup** pg,
             g->current_tid(),
             (bool)(using_attr.flags & BTHREAD_NOSIGNAL)
         };
+
+        // Note(deepld): 要进行任务抢占了，保留上一个被执行任务的 tid 信息，以便后续恢复执行
+        //   遗留的任务是，将这个任务重新加入到队列中去
         g->set_remained(fn, &args);
         TaskGroup::sched_to(pg, m->tid);
     }
@@ -451,6 +471,8 @@ int TaskGroup::start_background(bthread_t* __restrict th,
     if (REMOTE) {
         ready_to_run_remote(m->tid, (using_attr.flags & BTHREAD_NOSIGNAL));
     } else {
+
+        // 自动 choose TaskGroup 时会走到这里
         ready_to_run(m->tid, (using_attr.flags & BTHREAD_NOSIGNAL));
     }
     return 0;
@@ -483,9 +505,12 @@ int TaskGroup::join(bthread_t tid, void** return_value) {
         return EINVAL;
     }
     const uint32_t expected_version = get_version(tid);
+
+    // NOTE(deepld): bthread 完成的时候被唤醒，这时 version_butex 版本已经 + 1 了
     while (*m->version_butex == expected_version) {
         if (butex_wait(m->version_butex, expected_version, NULL) < 0 &&
             errno != EWOULDBLOCK && errno != EINTR) {
+            // bthread 已经分配给其他线程了，当前 bthread 已经结束
             return errno;
         }
     }
@@ -513,6 +538,8 @@ TaskStatistics TaskGroup::main_stat() const {
 void TaskGroup::ending_sched(TaskGroup** pg) {
     TaskGroup* g = *pg;
     bthread_t next_tid = 0;
+
+    // NOTE(deepld): 查看是否有本地任务、远程任务存在，有就立即开始执行
     // Find next task to run, if none, switch to idle thread of the group.
 #ifndef BTHREAD_FAIR_WSQ
     // When BTHREAD_FAIR_WSQ is defined, profiling shows that cpu cost of
@@ -522,13 +549,19 @@ void TaskGroup::ending_sched(TaskGroup** pg) {
 #else
     const bool popped = g->_rq.steal(&next_tid);
 #endif
+
+    // NOTE(deepld): 当前group local的任务执行完了，进入sleep之前，从自己的 remote 队列，或者其他 TaskGroup 中继续获取任务
+    //    没有的话，恢复主 bthread 的执行；即：TaskGroup::run_main_task 中的路径
     if (!popped && !g->steal_task(&next_tid)) {
         // Jump to main task if there's no task to run.
         next_tid = g->_main_tid;
     }
 
+    // 为下一个调度分配 stack
     TaskMeta* const cur_meta = g->_cur_meta;
     TaskMeta* next_meta = address_meta(next_tid);
+
+    // NOTE(deepld): 下一个要执行的bthread从未执行过，而当前即将完结的 bthread 已经没用了，起堆栈交给新的 tbhread 来使用，重复利用 stack
     if (next_meta->stack == NULL) {
         if (next_meta->stack_type() == cur_meta->stack_type()) {
             // also works with pthread_task scheduling to pthread_task, the
@@ -567,6 +600,11 @@ void TaskGroup::sched(TaskGroup** pg) {
     sched_to(pg, next_tid);
 }
 
+// NOTE(deepld): 调度最新的 bthread。在此之前，已经设置了 set_remained，在新的 task_runner 堆栈执行时 调用
+//
+// 执行到这里时，处于以下两种情况：
+//    1. main bthread 中（不断 steal 新的 bthread 来执行）
+//    2. 其他 bthread 阻塞过程中（bthread sleep、网络等，然后 TaskGroup::yield），开始调度其他 bthread;
 void TaskGroup::sched_to(TaskGroup** pg, TaskMeta* next_meta) {
     TaskGroup* g = *pg;
 #ifndef NDEBUG
@@ -583,6 +621,8 @@ void TaskGroup::sched_to(TaskGroup** pg, TaskMeta* next_meta) {
     const int64_t now = butil::cpuwide_time_ns();
     const int64_t elp_ns = now - g->_last_run_ns;
     g->_last_run_ns = now;
+
+    // NOTE(deepld): 更新 last meta 到目前为止，记录的cpu时间
     cur_meta->stat.cputime_ns += elp_ns;
     if (cur_meta->tid != g->main_tid()) {
         g->_cumulated_cputime_ns += elp_ns;
@@ -592,6 +632,8 @@ void TaskGroup::sched_to(TaskGroup** pg, TaskMeta* next_meta) {
     // Switch to the task
     if (__builtin_expect(next_meta != cur_meta, 1)) {
         g->_cur_meta = next_meta;
+
+        // NOTE(deepld): 切换 LocalStorage
         // Switch tls_bls
         cur_meta->local_storage = tls_bls;
         tls_bls = next_meta->local_storage;
@@ -604,9 +646,19 @@ void TaskGroup::sched_to(TaskGroup** pg, TaskMeta* next_meta) {
                       << next_meta->tid;
         }
 
+        // NOTE(deepld): 切换执行堆栈
         if (cur_meta->stack != NULL) {
             if (next_meta->stack != cur_meta->stack) {
+
+                // NOTE(deepld): 在相同线程中，堆栈跳转；开始执行新任务（执行新的 TaskRunner）
                 jump_stack(cur_meta->stack, next_meta->stack);
+
+                // 1. 继续执行 jump_stack 之前的任务（恢复了cur_meta->stack，继续往下走）
+                //    这里可能已经到了新的 TaskGroup；如果是 main bthread，必然不会切换 TaskGroup
+                //
+                // 2. 如果任务都执行了完了，这里恢复的是 TaskGroup 的 main bthread
+                //
+                // 这里类似于 fork 的效果？
                 // probably went to another group, need to assign g again.
                 g = tls_task_group;
             }
@@ -623,6 +675,8 @@ void TaskGroup::sched_to(TaskGroup** pg, TaskMeta* next_meta) {
         LOG(FATAL) << "bthread=" << g->current_tid() << " sched_to itself!";
     }
 
+    // NOTE(deepld): 这里已经切换到到原来的 bthread了(如果任务执行完毕，这里就是 main bthread)
+    //    这里设置的是，清理上一个执行的 bthread 的堆栈资源
     while (g->_last_context_remained) {
         RemainedFn fn = g->_last_context_remained;
         g->_last_context_remained = NULL;
@@ -630,6 +684,7 @@ void TaskGroup::sched_to(TaskGroup** pg, TaskMeta* next_meta) {
         g = tls_task_group;
     }
 
+    // 恢复 bthread 的同时，也回复其 errno
     // Restore errno
     errno = saved_errno;
     tls_unique_user_ptr = saved_unique_user_ptr;
@@ -656,6 +711,8 @@ void TaskGroup::ready_to_run(bthread_t tid, bool nosignal) {
     } else {
         const int additional_signal = _num_nosignal;
         _num_nosignal = 0;
+
+        // 打包了 _num_nosignal 的，这次一起 signal
         _nsignaled += 1 + additional_signal;
         _control->signal_task(1 + additional_signal);
     }
@@ -672,6 +729,8 @@ void TaskGroup::flush_nosignal_tasks() {
 
 void TaskGroup::ready_to_run_remote(bthread_t tid, bool nosignal) {
     _remote_rq._mutex.lock();
+
+    // NOTE(deepld): 任务已满，让 nosignal 的哪些立即唤醒执行
     while (!_remote_rq.push_locked(tid)) {
         flush_nosignal_tasks_remote_locked(_remote_rq._mutex);
         LOG_EVERY_SECOND(ERROR) << "_remote_rq is full, capacity="
@@ -679,7 +738,9 @@ void TaskGroup::ready_to_run_remote(bthread_t tid, bool nosignal) {
         ::usleep(1000);
         _remote_rq._mutex.lock();
     }
+
     if (nosignal) {
+        // batch方式来执行，提升性能？
         ++_remote_num_nosignal;
         _remote_rq._mutex.unlock();
     } else {
@@ -740,6 +801,7 @@ static void ready_to_run_from_timer_thread(void* arg) {
     e->group->control()->choose_one_group()->ready_to_run_remote(e->tid);
 }
 
+// NOTE(deepld): 设置timer回调
 void TaskGroup::_add_sleep_event(void* void_args) {
     // Must copy SleepArgs. After calling TimerThread::schedule(), previous
     // thread may be stolen by a worker immediately and the on-stack SleepArgs
@@ -747,6 +809,7 @@ void TaskGroup::_add_sleep_event(void* void_args) {
     SleepArgs e = *static_cast<SleepArgs*>(void_args);
     TaskGroup* g = e.group;
 
+    // NOTE(deepld): 当超时后，会随机选一个 TaskGroup 来执行
     TimerThread::TaskId sleep_id;
     sleep_id = get_global_timer_thread()->schedule(
         ready_to_run_from_timer_thread, void_args,
@@ -758,6 +821,7 @@ void TaskGroup::_add_sleep_event(void* void_args) {
         return;
     }
 
+    // NOTE(deepld): 设置 sleep id，用于后续能够 中断 sleep
     // Set TaskMeta::current_sleep which is for interruption.
     const uint32_t given_ver = get_version(e.tid);
     {
@@ -792,8 +856,13 @@ int TaskGroup::usleep(TaskGroup** pg, uint64_t timeout_us) {
     // We have to schedule timer after we switched to next bthread otherwise
     // the timer may wake up(jump to) current still-running context.
     SleepArgs e = { timeout_us, g->current_tid(), g->current_task(), g };
+
+    // NOTE(deepld): 当调度了下一个 bthread 的时候，就会将当前 bthread加入到 timer 中，等待超时回调
+    //    这个 timer 超时后，就将这个 bthread 重新加入到执行队列中
     g->set_remained(_add_sleep_event, &e);
     sched(pg);
+
+    // NOTE(deepld): 此处已经是 bthread 被重新唤醒了，再次调度被执行
     g = *pg;
     e.meta->current_sleep = 0;
     if (e.meta->interrupted) {
@@ -813,6 +882,7 @@ int TaskGroup::usleep(TaskGroup** pg, uint64_t timeout_us) {
 // Defined in butex.cpp
 bool erase_from_butex_because_of_interruption(ButexWaiter* bw);
 
+// NOTE(deepld): 取出记录在 bthread 结构中的 Waiter(调用了 butex_wait)、或者 sleepid（timer）
 static int interrupt_and_consume_waiters(
     bthread_t tid, ButexWaiter** pw, uint64_t* sleep_id) {
     TaskMeta* const m = TaskGroup::address_meta(tid);
@@ -822,6 +892,8 @@ static int interrupt_and_consume_waiters(
     const uint32_t given_ver = get_version(tid);
     BAIDU_SCOPED_LOCK(m->version_lock);
     if (given_ver == *m->version_butex) {
+        // NOTE(deepld): interrupt 的时候，current_waiter 设置为空，等待者可以根据这个判断出来
+        //    获取当前正在 wait 和 sleep 的 bthread
         *pw = m->current_waiter.exchange(NULL, butil::memory_order_acquire);
         *sleep_id = m->current_sleep;
         m->current_sleep = 0;  // only one stopper gets the sleep_id
@@ -852,25 +924,35 @@ static int set_butex_waiter(bthread_t tid, ButexWaiter* w) {
 // by race conditions.
 // TODO: bthreads created by BTHREAD_ATTR_PTHREAD blocking on bthread_usleep()
 // can't be interrupted.
+
+// NOTE(deepld): 只是唤醒一个 bthread，而不是wait在一个butex上的所有bthread
 int TaskGroup::interrupt(bthread_t tid, TaskControl* c) {
     // Consume current_waiter in the TaskMeta, wake it up then set it back.
     ButexWaiter* w = NULL;
     uint64_t sleep_id = 0;
+
+    // NOTE(deepld): 获取处于block 状态的 waiter 或者 timer；因为一个bthread 同一时间，只能能处于一种 block 状态
     int rc = interrupt_and_consume_waiters(tid, &w, &sleep_id);
     if (rc) {
         return rc;
     }
     // a bthread cannot wait on a butex and be sleepy at the same time.
     CHECK(!sleep_id || !w);
+
+    // NOTE(deepld): bthread 处于 butex wait
     if (w != NULL) {
         erase_from_butex_because_of_interruption(w);
         // If butex_wait() already wakes up before we set current_waiter back,
         // the function will spin until current_waiter becomes non-NULL.
+
+        // NOTE(deepld): 这里把刚才取出的 current waiter 又设置回 bthread
         rc = set_butex_waiter(tid, w);
         if (rc) {
             LOG(FATAL) << "butex_wait should spin until setting back waiter";
             return rc;
         }
+
+    // NOTE(deepld): 如果有 bthread sleep 在等待，那么就立即取消定时器，并调度该 bthread
     } else if (sleep_id != 0) {
         if (get_global_timer_thread()->unschedule(sleep_id) == 0) {
             bthread::TaskGroup* g = bthread::tls_task_group;
@@ -890,7 +972,11 @@ int TaskGroup::interrupt(bthread_t tid, TaskControl* c) {
 void TaskGroup::yield(TaskGroup** pg) {
     TaskGroup* g = *pg;
     ReadyToRunArgs args = { g->current_tid(), false };
+
+    // NOTE(deepld): group 发生调度之前，会将这个 bthread 重新加入到队列中去
     g->set_remained(ready_to_run_in_worker, &args);
+
+    // NOTE(deepld): 调度 TaksGroup 的其他任务来执行
     sched(pg);
 }
 

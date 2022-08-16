@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-#cmake_minimum_required(VERSION 2.8.10)
+cmake_minimum_required(VERSION 2.8.10)
 project(brpc C CXX)
 
 option(WITH_GLOG "With glog" OFF)
@@ -112,6 +112,7 @@ if(WITH_MESALINK)
 endif()
 set(CMAKE_CPP_FLAGS "${CMAKE_CPP_FLAGS} -DBTHREAD_USE_FAST_PTHREAD_MUTEX -D__const__=__unused__ -D_GNU_SOURCE -DUSE_SYMBOLIZE -DNO_TCMALLOC -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DBRPC_REVISION=\\\"${BRPC_REVISION}\\\" -D__STRICT_ANSI__")
 set(CMAKE_CPP_FLAGS "${CMAKE_CPP_FLAGS} ${DEBUG_SYMBOL} ${THRIFT_CPP_FLAG}")
+set(CMAKE_CPP_FLAGS "${CMAKE_CPP_FLAGS} -Wno-error=deprecated-declarations -Wno-deprecated-declarations")
 set(CMAKE_CXX_FLAGS "${CMAKE_CPP_FLAGS} -O0 -pipe -Wall -W -fPIC -fstrict-aliasing -Wno-invalid-offsetof -Wno-unused-parameter -fno-omit-frame-pointer")
 set(CMAKE_C_FLAGS "${CMAKE_CPP_FLAGS} -O0 -pipe -Wall -W -fPIC -fstrict-aliasing -Wno-unused-parameter -fno-omit-frame-pointer")
 
@@ -451,7 +452,7 @@ set(SOURCES
     )
 
 add_subdirectory(src)
-#add_subdirectory(example/redis_c++)
+add_subdirectory(example/redis_c++)
 add_subdirectory(example/echo_c++)
 if(BUILD_UNIT_TESTS)
     enable_testing()
@@ -484,4 +485,3 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/output/include/
 # Install pkgconfig
 configure_file(cmake/brpc.pc.in ${PROJECT_BINARY_DIR}/brpc.pc @ONLY)
 install(FILES ${PROJECT_BINARY_DIR}/brpc.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
-add_subdirectory(example/echo_c++)

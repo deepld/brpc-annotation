@@ -225,6 +225,7 @@ friend class TaskControl;
     int _sched_recursive_guard;
 #endif
 
+    // NOTE(deepld): 记录到的当前正在执行的 bthread
     TaskMeta* _cur_meta;
     
     // the control that this group belongs to
@@ -246,6 +247,8 @@ friend class TaskControl;
     size_t _steal_seed;
     size_t _steal_offset;
     ContextualStack* _main_stack;
+
+    // NOTE(deepld): init 时分配的一个 bthread
     bthread_t _main_tid;
     WorkStealingQueue<bthread_t> _rq;
     RemoteTaskQueue _remote_rq;

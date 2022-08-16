@@ -71,6 +71,7 @@ void* TaskControl::worker_thread(void* arg) {
     BT_VLOG << "Created worker=" << pthread_self()
             << " bthread=" << g->main_tid();
 
+    // NOTE(deepld): 记录每个 pthread 对应的 task group
     tls_task_group = g;
     c->_nworkers << 1;
     g->run_main_task();
@@ -274,6 +275,9 @@ int TaskControl::_add_group(TaskGroup* g) {
         _ngroup.store(ngroup + 1, butil::memory_order_release);
     }
     mu.unlock();
+
+    // NOTE(deepld): 如果 delte group，当前实现方式是移动到 group 数组的末尾，可能被删除的 group 还有pending 任务在执行
+    //    这里确保 _groups[ngroup - 1] 一定会被执行到？
     // See the comments in _destroy_group
     // TODO: Not needed anymore since non-worker pthread cannot have TaskGroup
     signal_task(65536);
@@ -319,6 +323,8 @@ int TaskControl::_destroy_group(TaskGroup* g) {
         }
     }
 
+    // NOTE(deepld): 为了性能用了没有加锁的方式来处理，可能导致 delete group 还在被访问中，延迟删除
+
     // Can't delete g immediately because for performance consideration,
     // we don't lock _modify_group_mutex in steal_task which may
     // access the removed group concurrently. We use simple strategy here:
@@ -340,6 +346,7 @@ bool TaskControl::steal_task(bthread_t* tid, size_t* seed, size_t offset) {
         return false;
     }
 
+    // NOTE(deepld): 尝试从其他随机 group 获取 task，包括其 local、remote
     // NOTE: Don't return inside `for' iteration since we need to update |seed|
     bool stolen = false;
     size_t s = *seed;
@@ -357,6 +364,8 @@ bool TaskControl::steal_task(bthread_t* tid, size_t* seed, size_t offset) {
             }
         }
     }
+
+    // NOTE(deepld): 记录当前执行的断点，下次就可以选在下一个 group
     *seed = s;
     return stolen;
 }
@@ -365,6 +374,9 @@ void TaskControl::signal_task(int num_task) {
     if (num_task <= 0) {
         return;
     }
+
+    // NOTE(deepld): 最多两个signal
+
     // TODO(gejun): Current algorithm does not guarantee enough threads will
     // be created to match caller's requests. But in another side, there's also
     // many useless signalings according to current impl. Capping the concurrency
@@ -372,6 +384,9 @@ void TaskControl::signal_task(int num_task) {
     if (num_task > 2) {
         num_task = 2;
     }
+
+    // NOTE(deepld): 找到当前 pthread，分配到相应的一组 TaskGroup 上去；避免跨度太大，减少影响范围？
+    //    轮询方式，通知该组的多个 task
     int start_index = butil::fmix64(pthread_numeric_id()) % PARKING_LOT_NUM;
     num_task -= _pl[start_index].signal(1);
     if (num_task > 0) {
@@ -382,6 +397,8 @@ void TaskControl::signal_task(int num_task) {
             num_task -= _pl[start_index].signal(1);
         }
     }
+
+    // 线程数不足了，启动新的线程
     if (num_task > 0 &&
         FLAGS_bthread_min_concurrency > 0 &&    // test min_concurrency for performance
         _concurrency.load(butil::memory_order_relaxed) < FLAGS_bthread_concurrency) {

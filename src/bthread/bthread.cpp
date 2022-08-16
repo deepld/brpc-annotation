@@ -33,6 +33,7 @@ namespace bthread {
 DEFINE_int32(bthread_concurrency, 8 + BTHREAD_EPOLL_THREAD_NUM,
              "Number of pthread workers");
 
+// Note(deepld): set min as 1 to simple debug, set default 0 -> 1
 DEFINE_int32(bthread_min_concurrency, 0,
             "Initial number of pthread workers which will be added on-demand."
             " The laziness is disabled when this value is non-positive,"
@@ -178,6 +179,7 @@ int bthread_start_urgent(bthread_t* __restrict tid,
         // start from worker
         return bthread::TaskGroup::start_foreground(&g, tid, attr, fn, arg);
     }
+    // NOTE(deepld): 如果不是在 pthread worker 发起 bthread 请求，就随机挑选一个
     return bthread::start_from_non_worker(tid, attr, fn, arg);
 }
 
@@ -188,6 +190,7 @@ int bthread_start_background(bthread_t* __restrict tid,
     bthread::TaskGroup* g = bthread::tls_task_group;
     if (g) {
         // start from worker
+        // NOTE(deepld): 放在当前TaskGroup的local queue中
         return g->start_background<false>(tid, attr, fn, arg);
     }
     return bthread::start_from_non_worker(tid, attr, fn, arg);
@@ -269,6 +272,8 @@ int bthread_setconcurrency(int num) {
         LOG(ERROR) << "Invalid concurrency=" << num;
         return EINVAL;
     }
+
+    // NOTE(deepld): 设置过最小值，就使用用设置的值进行操作了。不动态变更
     if (bthread::FLAGS_bthread_min_concurrency > 0) {
         if (num < bthread::FLAGS_bthread_min_concurrency) {
             return EINVAL;

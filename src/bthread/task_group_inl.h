@@ -61,10 +61,14 @@ inline void TaskGroup::exchange(TaskGroup** pg, bthread_t next_tid) {
 
 inline void TaskGroup::sched_to(TaskGroup** pg, bthread_t next_tid) {
     TaskMeta* next_meta = address_meta(next_tid);
+
+    // NOTE(deepld): bthread 第一次运行，生成任务堆栈
     if (next_meta->stack == NULL) {
         ContextualStack* stk = get_stack(next_meta->stack_type(), task_runner);
         if (stk) {
             next_meta->set_stack(stk);
+
+        // NOTE(deepld): 内存不足，直接使用 pthread stack
         } else {
             // stack_type is BTHREAD_STACKTYPE_PTHREAD or out of memory,
             // In latter case, attr is forced to be BTHREAD_STACKTYPE_PTHREAD.

@@ -27,6 +27,7 @@
 
 namespace bthread {
 
+// NOTE(deepld): 将 TaskGroup 分组；新来的任务根据调用者 pthread id ，分配到 不同的 Group 中
 // Park idle workers.
 class BAIDU_CACHELINE_ALIGNMENT ParkingLot {
 public:

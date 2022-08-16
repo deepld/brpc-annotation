@@ -44,3 +44,4 @@ CTestTestfile.cmake
 /test/curl.out
 /test/out.txt
 /test/recordio_ref.io
+builds/

@@ -41,15 +41,25 @@ compile_proto(PROTO_HDRS PROTO_SRCS ${CMAKE_BINARY_DIR}/test
                                     "${TEST_PROTO_FILES}")
 add_library(TEST_PROTO_LIB OBJECT ${PROTO_SRCS} ${PROTO_HDRS})
 
-set(BRPC_SYSTEM_GTEST_SOURCE_DIR "" CACHE PATH "System googletest source directory.")
 
-if(DOWNLOAD_GTEST)
-    include(SetupGtest)
-elseif(BRPC_SYSTEM_GTEST_SOURCE_DIR)
-    add_subdirectory("${BRPC_SYSTEM_GTEST_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/system-googletest-build")
-else()
-    message(FATAL_ERROR "Googletest is not available")
-endif()
+#set(BRPC_SYSTEM_GTEST_SOURCE_DIR "" CACHE PATH "System googletest source directory.")
+#
+#if(DOWNLOAD_GTEST)
+#    include(SetupGtest)
+#elseif(BRPC_SYSTEM_GTEST_SOURCE_DIR)
+#    add_subdirectory("${BRPC_SYSTEM_GTEST_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/system-googletest-build")
+#else()
+#    message(FATAL_ERROR "Googletest is not available")
+#endif()
+
+#Note: recompile gtest with -frtti
+#set(CMAKE_CXX_FLAGS "${CMAKE_CPP_FLAGS} -frtti")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -frtti")
+set(3RD_BASE "/Users/darwin/base/code/github/3rd")
+include_directories(.)
+include_directories(${3RD_BASE}/include)
+link_directories(${3RD_BASE}/lib)
+
 
 set(CMAKE_CPP_FLAGS "${DEFINE_CLOCK_GETTIME} -DBRPC_WITH_GLOG=${WITH_GLOG_VAL} -DGFLAGS_NS=${GFLAGS_NS}")
 set(CMAKE_CPP_FLAGS "${CMAKE_CPP_FLAGS} -DBTHREAD_USE_FAST_PTHREAD_MUTEX -D__const__=__unused__ -D_GNU_SOURCE -DUSE_SYMBOLIZE -DNO_TCMALLOC -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DUNIT_TEST -Dprivate=public -Dprotected=public -DBVAR_NOT_LINK_DEFAULT_VARIABLES -D__STRICT_ANSI__ -include ${PROJECT_SOURCE_DIR}/test/sstream_workaround.h")
@@ -236,7 +246,7 @@ file(GLOB BTHREAD_UNITTESTS "bthread*unittest.cpp")
 foreach(BTHREAD_UT ${BTHREAD_UNITTESTS})
     get_filename_component(BTHREAD_UT_WE ${BTHREAD_UT} NAME_WE)
     add_executable(${BTHREAD_UT_WE} ${BTHREAD_UT})
-    target_link_libraries(${BTHREAD_UT_WE} gtest_main
+    target_link_libraries(${BTHREAD_UT_WE} gtest_main gtest
                                            brpc-shared-debug
                                            ${GPERFTOOLS_LIBRARIES})
     add_test(NAME ${BTHREAD_UT_WE} COMMAND ${BTHREAD_UT_WE})
@@ -248,7 +258,7 @@ foreach(BRPC_UT ${BRPC_UNITTESTS})
     get_filename_component(BRPC_UT_WE ${BRPC_UT} NAME_WE)
     add_executable(${BRPC_UT_WE} ${BRPC_UT} $<TARGET_OBJECTS:TEST_PROTO_LIB>)
     target_link_libraries(${BRPC_UT_WE} brpc-shared-debug
-                                        gtest_main
+                                        gtest_main gtest
                                         ${GPERFTOOLS_LIBRARIES})
     add_test(NAME ${BRPC_UT_WE} COMMAND ${BRPC_UT_WE})
 endforeach()

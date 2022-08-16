@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+cmake_minimum_required(VERSION 2.8.10)
 project(echo_c++ C CXX)
 
 option(LINK_SO "Whether examples are linked dynamically" OFF)
@@ -33,21 +34,17 @@ protobuf_generate_cpp(PROTO_SRC PROTO_HEADER echo.proto)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 # Search for libthrift* by best effort. If it is not found and brpc is
-## compiled with thrift protocol enabled, a link error would be reported.
-#find_library(THRIFT_LIB NAMES thrift)
-#if (NOT THRIFT_LIB)
-#    set(THRIFT_LIB "")
-#endif()
-#find_library(THRIFTNB_LIB NAMES thriftnb)
-#if (NOT THRIFTNB_LIB)
-#    set(THRIFTNB_LIB "")
-#endif()
+# compiled with thrift protocol enabled, a link error would be reported.
+find_library(THRIFT_LIB NAMES thrift)
+if (NOT THRIFT_LIB)
+    set(THRIFT_LIB "")
+endif()
+find_library(THRIFTNB_LIB NAMES thriftnb)
+if (NOT THRIFTNB_LIB)
+    set(THRIFTNB_LIB "")
+endif()
 
-<<<<<<< HEAD
 find_path(BRPC_INCLUDE_PATH NAMES brpc/server.h)
-=======
-#find_path(BRPC_INCLUDE_PATH NAMES brpc/server.h)
->>>>>>> 9fd38c97 (add example)
 #if(LINK_SO)
 #    find_library(BRPC_LIB NAMES brpc)
 #else()
@@ -57,10 +54,7 @@ find_path(BRPC_INCLUDE_PATH NAMES brpc/server.h)
 #    message(FATAL_ERROR "Fail to find brpc")
 #endif()
 #include_directories(${BRPC_INCLUDE_PATH})
-<<<<<<< HEAD
 set(BRPC_LIB brpc-static)
-=======
->>>>>>> 9fd38c97 (add example)
 
 find_path(GFLAGS_INCLUDE_PATH gflags/gflags.h)
 find_library(GFLAGS_LIBRARY NAMES gflags libgflags)
@@ -125,10 +119,8 @@ set(DYNAMIC_LIB
     ${LEVELDB_LIB}
     ${OPENSSL_CRYPTO_LIBRARY}
     ${OPENSSL_SSL_LIBRARY}
-    #${THRIFT_LIB}
-    #${THRIFTNB_LIB}
-    ssl
-    z
+    ${THRIFT_LIB}
+    ${THRIFTNB_LIB}
     dl
     )
 
