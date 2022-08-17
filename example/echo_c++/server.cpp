@@ -22,7 +22,7 @@
 #include <brpc/server.h>
 #include "echo.pb.h"
 
-DEFINE_bool(echo_attachment, true, "Echo attachment as well");
+DEFINE_bool(echo_attachment, false, "Echo attachment as well");
 DEFINE_int32(port, 8000, "TCP Port of this server");
 DEFINE_string(listen_addr, "", "Server listen address, may be IPV4/IPV6/UDS."
             " If this is set, the flag port will be ignored");
@@ -53,11 +53,11 @@ public:
         // The purpose of following logs is to help you to understand
         // how clients interact with servers more intuitively. You should 
         // remove these logs in performance-sensitive servers.
-        LOG(INFO) << "Received request[log_id=" << cntl->log_id() 
-                  << "] from " << cntl->remote_side() 
-                  << " to " << cntl->local_side()
-                  << ": " << request->message()
-                  << " (attached=" << cntl->request_attachment() << ")";
+        //        LOG(INFO) << "Received request[log_id=" << cntl->log_id() 
+        //                << "] from " << cntl->remote_side() 
+        //              << " to " << cntl->local_side()
+        //            << ": " << request->message()
+        //          << " (attached=" << cntl->request_attachment() << ")";
 
         // Fill response.
         response->set_message(request->message());

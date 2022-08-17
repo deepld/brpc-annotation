@@ -153,6 +153,6 @@ add_executable(redis_server redis_server.cpp)
 
 set(AUX_LIB readline ncurses)
 
-target_link_libraries(redis_cli ${BRPC_LIB} ${DYNAMIC_LIB} ${AUX_LIB})
-target_link_libraries(redis_press ${BRPC_LIB} ${DYNAMIC_LIB})
-target_link_libraries(redis_server ${BRPC_LIB} ${DYNAMIC_LIB})
+target_link_libraries(redis_cli ${BRPC_LIB} ${DYNAMIC_LIB} ${AUX_LIB} snappy protobuf z event)
+target_link_libraries(redis_press ${BRPC_LIB} ${DYNAMIC_LIB} snappy protobuf z event)
+target_link_libraries(redis_server ${BRPC_LIB} ${DYNAMIC_LIB} snappy protobuf z event)

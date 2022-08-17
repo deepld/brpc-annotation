@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 2.8.10)
 project(echo_c++ C CXX)
 
 option(LINK_SO "Whether examples are linked dynamically" OFF)
-
+message(status ${PROJECT_SOURCE_DIR}/../..)
 execute_process(
     COMMAND bash -c "find ${PROJECT_SOURCE_DIR}/../.. -type d -regex \".*output/include$\" | head -n1 | xargs dirname | tr -d '\n'"
     OUTPUT_VARIABLE OUTPUT_PATH
@@ -140,5 +140,5 @@ endif()
 add_executable(echo_client client.cpp ${PROTO_SRC} ${PROTO_HEADER})
 add_executable(echo_server server.cpp ${PROTO_SRC} ${PROTO_HEADER})
 
-target_link_libraries(echo_client ${BRPC_LIB} ${DYNAMIC_LIB})
-target_link_libraries(echo_server ${BRPC_LIB} ${DYNAMIC_LIB})
+target_link_libraries(echo_client ${BRPC_LIB} ${DYNAMIC_LIB} snappy protobuf z event)
+target_link_libraries(echo_server ${BRPC_LIB} ${DYNAMIC_LIB} snappy protobuf z event)

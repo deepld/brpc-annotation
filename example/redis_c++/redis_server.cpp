@@ -117,7 +117,10 @@ int main(int argc, char* argv[]) {
     brpc::Server server;
     brpc::ServerOptions server_options;
     server_options.redis_service = rsimpl;
-    if (server.Start(FLAGS_port, &server_options) != 0) {
+    butil::EndPoint point;
+    butil::str2endpoint("0.0.0.0", FLAGS_port, &point);
+
+    if (server.Start(point, &server_options) != 0) {
         LOG(ERROR) << "Fail to start server";
         return -1;
     }
