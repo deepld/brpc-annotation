@@ -41,6 +41,12 @@ extern __thread bthread::LocalStorage tls_bls;
 namespace brpc {
 
 DECLARE_bool(enable_rpcz);
+DECLARE_bool(detail_rpcz);
+
+#define DEEP_ANNOTATE(span, fmt, args...)   \
+if (FLAGS_detail_rpcz && span) {            \
+    span->Annotate(fmt, ##args);            \
+}
 
 // Collect information required by /rpcz and tracing system whose idea is
 // described in http://static.googleusercontent.com/media/research.google.com/en//pubs/archive/36356.pdf

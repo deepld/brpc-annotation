@@ -57,6 +57,12 @@ size_t __attribute__((weak))
 get_sizes(const bthread_id_list_t* list, size_t* cnt, size_t n);
 }
 
+namespace deep {
+// copy extern to other place
+extern bvar::Adder<int64_t>  g_deep_send_bthread;
+extern bvar::Adder<int64_t>  g_deep_send_local;
+extern bvar::Adder<int64_t>  g_deep_send_bytes;
+}
 
 namespace brpc {
 
@@ -1544,6 +1550,7 @@ int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
         // depending on compiler) that the spin rarely occurs in practice
         // (I've not seen any spin in highly contended tests).
         req->next = prev_head;
+        deep::g_deep_send_bthread << 1;
         return 0;
     }
 
@@ -1600,11 +1607,13 @@ int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
         AddOutputBytes(nw);
     }
     if (IsWriteComplete(req, true, NULL)) {
+        deep::g_deep_send_local << 1;
         ReturnSuccessfulWriteRequest(req);
         return 0;
     }
 
 KEEPWRITE_IN_BACKGROUND:
+    deep::g_deep_send_bthread << 1;
     ReAddress(&ptr_for_keep_write);
     req->socket = ptr_for_keep_write.release();
     if (bthread_start_background(&th, &BTHREAD_ATTR_NORMAL,
