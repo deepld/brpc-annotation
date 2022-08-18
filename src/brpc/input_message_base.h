@@ -48,6 +48,9 @@ public:
     int64_t received_us() const { return _received_us; }
     int64_t base_real_us() const { return _base_real_us; }
 
+    int64_t start_queue_us() const { return _start_queue_us; }
+    void set_start_queue_us(int64_t time) { _start_queue_us = time; }
+
 protected:
     virtual ~InputMessageBase();
 
@@ -57,6 +60,7 @@ friend void* ProcessInputMessage(void*);
 friend class Stream;
     int64_t _received_us;
     int64_t _base_real_us;
+    int64_t _start_queue_us;
     SocketUniquePtr _socket;
     void (*_process)(InputMessageBase* msg);
     const void* _arg;

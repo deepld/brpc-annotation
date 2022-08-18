@@ -150,6 +150,9 @@ void* ProcessInputMessage(void* void_arg) {
 
 struct RunLastMessage {
     inline void operator()(InputMessageBase* last_msg) {
+        if (last_msg->start_queue_us() != -1) {
+            last_msg->set_start_queue_us(0);
+        }
         ProcessInputMessage(last_msg);
     }
 };
@@ -292,7 +295,12 @@ void InputMessenger::OnNewMessages(Socket* m) {
             }
             pr.message()->_received_us = received_us;
             pr.message()->_base_real_us = base_realtime;
-                        
+            if (index == PROTOCOL_HTTP) {
+                pr.message()->_start_queue_us = -1;
+            } else {
+                pr.message()->_start_queue_us = butil::cpuwide_time_us();
+            }
+
             // This unique_ptr prevents msg to be lost before transfering
             // ownership to last_msg
             DestroyingPtr<InputMessageBase> msg(pr.message());

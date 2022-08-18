@@ -43,6 +43,33 @@ extern "C" {
 void bthread_assign_data(void* data);
 }
 
+namespace deep {
+// copy extern to other place
+extern bvar::Adder<int64_t> g_deep_process_local;
+extern bvar::Adder<int64_t> g_deep_process_bthread;
+extern bvar::LatencyRecorder g_deep_process_bthread_record;
+
+extern bvar::Adder<int64_t>  g_deep_send_bthread;
+extern bvar::Adder<int64_t>  g_deep_send_local;
+extern bvar::Adder<int64_t>  g_deep_send_bytes;
+
+// process
+bvar::Adder<int64_t>  g_deep_process_local;
+bvar::Adder<int64_t>  g_deep_process_bthread;
+bvar::LatencyRecorder g_deep_process_bthread_record("deep_bthread_record");
+
+// send
+bvar::Adder<int64_t>  g_deep_send_local;
+bvar::Adder<int64_t>  g_deep_send_bthread;
+bvar::Adder<int64_t>  g_deep_send_bytes;
+
+// window
+bvar::PerSecond<bvar::Adder<int64_t>> g_deep_process_local_per_second("deep_process_local_per_second", &g_deep_process_local, 60);
+bvar::PerSecond<bvar::Adder<int64_t>> g_deep_process_bthread_per_second("deep_process_bthread_per_second", &g_deep_process_bthread, 60);
+bvar::PerSecond<bvar::Adder<int64_t>> g_deep_send_local_per_second("deep_send_local_per_second", &g_deep_send_local, 60);
+bvar::PerSecond<bvar::Adder<int64_t>> g_deep_send_bthread_per_second("deep_send_bthread_per_second", &g_deep_send_bthread, 60);
+bvar::PerSecond<bvar::Adder<int64_t>> g_deep_send_bytes_per_second("deep_send_bytes_per_second", &g_deep_send_bytes, 60);
+}
 
 namespace brpc {
 namespace policy {
@@ -179,6 +206,7 @@ void SendRpcResponse(int64_t correlation_id,
             append_body = true;
         }
     }
+    DEEP_ANNOTATE(span, "serialize data");
 
     // Don't use res->ByteSize() since it may be compressed
     size_t res_size = 0;
@@ -226,6 +254,7 @@ void SendRpcResponse(int64_t correlation_id,
         if (attached_size) {
             res_buf.append(cntl->response_attachment().movable());
         }
+        DEEP_ANNOTATE(span, "serialize meta and append data");
     }
 
     if (span) {
@@ -324,6 +353,18 @@ void ProcessRpcRequest(InputMessageBase* msg_base) {
                           socket->description().c_str());
         return;
     }
+    const int64_t parse_us = butil::cpuwide_time_us();
+    int32_t bthread_wait_us = -1;
+    if (msg_base->start_queue_us() >= 0) {
+        if (msg_base->start_queue_us() == 0) {
+            deep::g_deep_process_local << 1;
+        } else {
+            bthread_wait_us = static_cast<int32_t>(start_parse_us - msg_base->start_queue_us());
+            deep::g_deep_process_bthread << 1;
+            deep::g_deep_process_bthread_record << bthread_wait_us;
+        }
+    }
+
     const RpcRequestMeta &request_meta = meta.request();
 
     SampledRequest* sample = AskToBeSampled();
@@ -393,6 +434,9 @@ void ProcessRpcRequest(InputMessageBase* msg_base) {
         span->set_request_size(msg->payload.size() + msg->meta.size() + 12);
     }
 
+    DEEP_ANNOTATE(span, "bthread wait %d; parse meta use %d, then initialize", bthread_wait_us,
+                  static_cast<int32_t>(butil::cpuwide_time_us() - parse_us));
+
     MethodStatus* method_status = NULL;
     do {
         if (!server->IsRunning()) {
@@ -448,6 +492,8 @@ void ProcessRpcRequest(InputMessageBase* msg_base) {
             mp->service->CallMethod(mp->method, cntl.get(), &breq, &bres, NULL);
             break;
         }
+
+        DEEP_ANNOTATE(span, "find method property");
         // Switch to service-specific error.
         non_service_error.release();
         method_status = mp->status;
@@ -465,6 +511,8 @@ void ProcessRpcRequest(InputMessageBase* msg_base) {
         if (span) {
             span->ResetServerSpanName(method->full_name());
         }
+
+        DEEP_ANNOTATE(span, "find and set method");
         const int req_size = static_cast<int>(msg->payload.size());
         butil::IOBuf req_buf;
         butil::IOBuf* req_buf_ptr = &msg->payload;
@@ -499,6 +547,8 @@ void ProcessRpcRequest(InputMessageBase* msg_base) {
                 &SendRpcResponse, meta.correlation_id(), cntl.get(), 
                 req.get(), res.get(), server,
                 method_status, msg->received_us());
+
+        DEEP_ANNOTATE(span, "parse pb, create new callback");
 
         // optional, just release resource ASAP
         msg.reset();
