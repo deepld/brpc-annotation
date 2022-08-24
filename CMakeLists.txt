@@ -211,6 +211,7 @@ set(DYNAMIC_LIB
     ${THRIFT_LIB}
     ${THRIFTNB_LIB}
     ${OPENSSL_CRYPTO_LIBRARY}
+    snappy
     dl
     z)
 
